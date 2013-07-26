@@ -11,6 +11,7 @@ ifeq ($(call is-board-platform-in-list,$(MM_V4L2_DRIVER_LIST)),true)
       include $(call all-subdir-makefiles)
     endif
   endif
-endif
-endif
+endif # MM_V4L2_DRIVER_LIST
+endif # TARGET_BOARD_PLATFORM
 endif # TARGET_PROVIDES_CAMERA_HAL
+endif # USE_DEVICE_SPECIFIC_CAMERA
