@@ -28,6 +28,7 @@
 */
 
 #define LOG_TAG "QCamera3Factory"
+//#define LOG_NDEBUG 0
 
 #include <stdlib.h>
 #include <utils/Log.h>
@@ -53,7 +54,18 @@ QCamera3Factory gQCamera3Factory;
  *==========================================================================*/
 QCamera3Factory::QCamera3Factory()
 {
+    camera_info info;
+
     mNumOfCameras = get_num_of_cameras();
+
+    //Query camera at this point in order
+    //to avoid any delays during subsequent
+    //calls to 'getCameraInfo()'
+    for (int i = 0 ; i < mNumOfCameras ; i++) {
+        getCameraInfo(i, &info);
+    }
+    //
+
 }
 
 /*===========================================================================
@@ -133,8 +145,9 @@ int QCamera3Factory::getCameraInfo(int camera_id, struct camera_info *info)
     int rc;
     ALOGV("%s: E, camera_id = %d", __func__, camera_id);
 
-    if (!mNumOfCameras || camera_id >= mNumOfCameras || !info) {
-        return INVALID_OPERATION;
+    if (!mNumOfCameras || camera_id >= mNumOfCameras || !info ||
+        (camera_id < 0)) {
+        return -ENODEV;
     }
 
     rc = QCamera3HardwareInterface::getCamInfo(camera_id, info);
@@ -160,7 +173,7 @@ int QCamera3Factory::cameraDeviceOpen(int camera_id,
 {
     int rc = NO_ERROR;
     if (camera_id < 0 || camera_id >= mNumOfCameras)
-        return BAD_VALUE;
+        return -ENODEV;
 
     QCamera3HardwareInterface *hw = new QCamera3HardwareInterface(camera_id);
     if (!hw) {

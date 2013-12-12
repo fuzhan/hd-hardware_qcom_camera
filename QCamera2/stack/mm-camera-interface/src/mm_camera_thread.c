@@ -32,6 +32,7 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <cam_semaphore.h>
@@ -43,6 +44,8 @@
 typedef enum {
     /* poll entries updated */
     MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED,
+    /* poll entries updated */
+    MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED_ASYNC,
     /* exit */
     MM_CAMERA_PIPE_CMD_EXIT,
     /* max count */
@@ -59,6 +62,52 @@ typedef struct {
     uint8_t cmd;
     mm_camera_event_t event;
 } mm_camera_sig_evt_t;
+
+
+/*===========================================================================
+ * FUNCTION   : mm_camera_poll_sig_async
+ *
+ * DESCRIPTION: Asynchoronous call to send a command through pipe.
+ *
+ * PARAMETERS :
+ *   @poll_cb      : ptr to poll thread object
+ *   @cmd          : command to be sent
+ *
+ * RETURN     : int32_t type of status
+ *              0  -- success
+ *              -1 -- failure
+ *==========================================================================*/
+static int32_t mm_camera_poll_sig_async(mm_camera_poll_thread_t *poll_cb,
+                                  uint32_t cmd)
+{
+    /* send through pipe */
+    /* get the mutex */
+    mm_camera_sig_evt_t cmd_evt;
+    int len;
+
+    CDBG("%s: E cmd = %d", __func__,cmd);
+    memset(&cmd_evt, 0, sizeof(cmd_evt));
+    cmd_evt.cmd = cmd;
+    pthread_mutex_lock(&poll_cb->mutex);
+    /* reset the statue to false */
+    poll_cb->status = FALSE;
+    /* send cmd to worker */
+
+    len = write(poll_cb->pfds[1], &cmd_evt, sizeof(cmd_evt));
+    if(len < 1) {
+        CDBG_ERROR("%s: len = %d, errno = %d", __func__, len, errno);
+        /* Avoid waiting for the signal */
+        pthread_mutex_unlock(&poll_cb->mutex);
+        return 0;
+    }
+    CDBG("%s: begin IN mutex write done, len = %d", __func__, len);
+    pthread_mutex_unlock(&poll_cb->mutex);
+    CDBG("%s: X", __func__);
+    return 0;
+}
+
+
+
 
 /*===========================================================================
  * FUNCTION   : mm_camera_poll_sig
@@ -164,6 +213,7 @@ static void mm_camera_poll_proc_pipe(mm_camera_poll_thread_t *poll_cb)
          __func__, poll_cb->pfds[0], (int)read_len, (int)sizeof(cmd_evt), cmd_evt.cmd);
     switch (cmd_evt.cmd) {
     case MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED:
+    case MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED_ASYNC:
         /* we always have index 0 for pipe read */
         poll_cb->num_fds = 0;
         poll_cb->poll_fds[poll_cb->num_fds].fd = poll_cb->pfds[0];
@@ -198,7 +248,8 @@ static void mm_camera_poll_proc_pipe(mm_camera_poll_thread_t *poll_cb)
                 }
             }
         }
-        mm_camera_poll_sig_done(poll_cb);
+        if (cmd_evt.cmd != MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED_ASYNC)
+            mm_camera_poll_sig_done(poll_cb);
         break;
 
     case MM_CAMERA_PIPE_CMD_EXIT:
@@ -279,6 +330,7 @@ static void *mm_camera_poll_fn(mm_camera_poll_thread_t *poll_cb)
  *==========================================================================*/
 static void *mm_camera_poll_thread(void *data)
 {
+    prctl(PR_SET_NAME, (unsigned long)"mm_cam_poll_th", 0, 0, 0);
     mm_camera_poll_thread_t *poll_cb = (mm_camera_poll_thread_t *)data;
 
     /* add pipe read fd into poll first */
@@ -318,6 +370,7 @@ int32_t mm_camera_poll_thread_notify_entries_updated(mm_camera_poll_thread_t * p
  *   @fd        : file descriptor need to be added into polling thread
  *   @notify_cb : callback function to handle if any notify from fd
  *   @userdata  : user data ptr
+ *   @call_type : Whether its Synchronous or Asynchronous call
  *
  * RETURN     : none
  *==========================================================================*/
@@ -325,7 +378,8 @@ int32_t mm_camera_poll_thread_add_poll_fd(mm_camera_poll_thread_t * poll_cb,
                                           uint32_t handler,
                                           int32_t fd,
                                           mm_camera_poll_notify_t notify_cb,
-                                          void* userdata)
+                                          void* userdata,
+                                          mm_camera_call_type_t call_type)
 {
     int32_t rc = -1;
     uint8_t idx = 0;
@@ -344,7 +398,11 @@ int32_t mm_camera_poll_thread_add_poll_fd(mm_camera_poll_thread_t * poll_cb,
         poll_cb->poll_entries[idx].notify_cb = notify_cb;
         poll_cb->poll_entries[idx].user_data = userdata;
         /* send poll entries updated signal to poll thread */
-        rc = mm_camera_poll_sig(poll_cb, MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED);
+        if (call_type == mm_camera_sync_call ) {
+            rc = mm_camera_poll_sig(poll_cb, MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED);
+        } else {
+            rc = mm_camera_poll_sig_async(poll_cb, MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED_ASYNC );
+        }
     } else {
         CDBG_ERROR("%s: invalid handler %d (%d)",
                    __func__, handler, idx);
@@ -365,7 +423,8 @@ int32_t mm_camera_poll_thread_add_poll_fd(mm_camera_poll_thread_t * poll_cb,
  * RETURN     : none
  *==========================================================================*/
 int32_t mm_camera_poll_thread_del_poll_fd(mm_camera_poll_thread_t * poll_cb,
-                                          uint32_t handler)
+                                          uint32_t handler,
+                                          mm_camera_call_type_t call_type)
 {
     int32_t rc = -1;
     uint8_t idx = 0;
@@ -386,7 +445,11 @@ int32_t mm_camera_poll_thread_del_poll_fd(mm_camera_poll_thread_t * poll_cb,
         poll_cb->poll_entries[idx].notify_cb = NULL;
 
         /* send poll entries updated signal to poll thread */
-        rc = mm_camera_poll_sig(poll_cb, MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED);
+        if (call_type == mm_camera_sync_call ) {
+            rc = mm_camera_poll_sig(poll_cb, MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED);
+        } else {
+            rc = mm_camera_poll_sig_async(poll_cb, MM_CAMERA_PIPE_CMD_POLL_ENTRIES_UPDATED_ASYNC );
+        }
     } else {
         CDBG_ERROR("%s: invalid handler %d (%d)",
                    __func__, handler, idx);
@@ -395,10 +458,15 @@ int32_t mm_camera_poll_thread_del_poll_fd(mm_camera_poll_thread_t * poll_cb,
     return rc;
 }
 
+static pthread_mutex_t constr_destr_lock = PTHREAD_MUTEX_INITIALIZER;
+
 int32_t mm_camera_poll_thread_launch(mm_camera_poll_thread_t * poll_cb,
                                      mm_camera_poll_thread_type_t poll_type)
 {
     int32_t rc = 0;
+
+    pthread_mutex_lock(&constr_destr_lock);
+
     poll_cb->poll_type = poll_type;
 
     poll_cb->pfds[0] = 0;
@@ -406,6 +474,7 @@ int32_t mm_camera_poll_thread_launch(mm_camera_poll_thread_t * poll_cb,
     rc = pipe(poll_cb->pfds);
     if(rc < 0) {
         CDBG_ERROR("%s: pipe open rc=%d\n", __func__, rc);
+        pthread_mutex_unlock(&constr_destr_lock);
         return -1;
     }
 
@@ -427,15 +496,19 @@ int32_t mm_camera_poll_thread_launch(mm_camera_poll_thread_t * poll_cb,
     }
     pthread_mutex_unlock(&poll_cb->mutex);
     CDBG("%s: End",__func__);
+    pthread_mutex_unlock(&constr_destr_lock);
     return rc;
 }
 
 int32_t mm_camera_poll_thread_release(mm_camera_poll_thread_t *poll_cb)
 {
     int32_t rc = 0;
+
+    pthread_mutex_lock(&constr_destr_lock);
+
     if(MM_CAMERA_POLL_TASK_STATE_STOPPED == poll_cb->state) {
         CDBG_ERROR("%s: err, poll thread is not running.\n", __func__);
-        return rc;
+        goto done;
     }
 
     /* send exit signal to poll thread */
@@ -456,6 +529,8 @@ int32_t mm_camera_poll_thread_release(mm_camera_poll_thread_t *poll_cb)
     pthread_mutex_destroy(&poll_cb->mutex);
     pthread_cond_destroy(&poll_cb->cond_v);
     memset(poll_cb, 0, sizeof(mm_camera_poll_thread_t));
+done:
+    pthread_mutex_unlock(&constr_destr_lock);
     return rc;
 }
 
@@ -521,6 +596,15 @@ int32_t mm_camera_cmd_thread_launch(mm_camera_cmd_thread_t * cmd_thread,
                    (void *)cmd_thread);
     return rc;
 }
+
+int32_t mm_camera_cmd_thread_name(const char* name)
+{
+    int32_t rc = 0;
+    /* name the thread */
+    prctl(PR_SET_NAME, (unsigned long)name, 0, 0, 0);
+    return rc;
+}
+
 
 int32_t mm_camera_cmd_thread_stop(mm_camera_cmd_thread_t * cmd_thread)
 {

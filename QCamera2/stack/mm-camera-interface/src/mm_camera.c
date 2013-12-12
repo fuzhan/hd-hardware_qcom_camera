@@ -119,6 +119,7 @@ uint8_t mm_camera_util_chip_is_a_family(void)
 static void mm_camera_dispatch_app_event(mm_camera_cmdcb_t *cmd_cb,
                                          void* user_data)
 {
+    mm_camera_cmd_thread_name("mm_cam_event");
     int i;
     mm_camera_event_t *event = &cmd_cb->u.evt;
     mm_camera_obj_t * my_obj = (mm_camera_obj_t *)user_data;
@@ -1434,7 +1435,8 @@ int32_t mm_camera_evt_sub(mm_camera_obj_t * my_obj,
         }
         /* remove evt fd from the polling thraed when unreg the last event */
         rc = mm_camera_poll_thread_del_poll_fd(&my_obj->evt_poll_thread,
-                                               my_obj->my_hdl);
+                                               my_obj->my_hdl,
+                                               mm_camera_sync_call);
     } else {
         rc = ioctl(my_obj->ctrl_fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
         if (rc < 0) {
@@ -1446,7 +1448,8 @@ int32_t mm_camera_evt_sub(mm_camera_obj_t * my_obj,
                                                my_obj->my_hdl,
                                                my_obj->ctrl_fd,
                                                mm_camera_event_notify,
-                                               (void*)my_obj);
+                                               (void*)my_obj,
+                                               mm_camera_sync_call);
     }
     return rc;
 }

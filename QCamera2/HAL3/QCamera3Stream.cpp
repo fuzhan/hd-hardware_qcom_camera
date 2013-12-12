@@ -28,6 +28,7 @@
 */
 
 #define LOG_TAG "QCamera3Stream"
+//#define LOG_NDEBUG 0
 
 #include <utils/Log.h>
 #include <utils/Errors.h>
@@ -230,6 +231,7 @@ QCamera3Stream::~QCamera3Stream()
 int32_t QCamera3Stream::init(cam_stream_type_t streamType,
                             cam_format_t streamFormat,
                             cam_dimension_t streamDim,
+                            cam_stream_reproc_config_t* reprocess_config,
                             uint8_t minNumBuffers,
                             stream_cb_routine stream_cb,
                             void *userdata)
@@ -264,9 +266,19 @@ int32_t QCamera3Stream::init(cam_stream_type_t streamType,
     mStreamInfo->stream_type = streamType;
     mStreamInfo->fmt = streamFormat;
     mStreamInfo->dim = streamDim;
-    mStreamInfo->streaming_mode = CAM_STREAMING_MODE_CONTINUOUS;
+
+
 
     mNumBufs = minNumBuffers;
+    if (reprocess_config != NULL) {
+       mStreamInfo->reprocess_config = *reprocess_config;
+       mStreamInfo->streaming_mode = CAM_STREAMING_MODE_BURST;
+       //mStreamInfo->num_of_burst = reprocess_config->offline.num_of_bufs;
+       mStreamInfo->num_of_burst = 1;
+       ALOGE("%s: num_of_burst is %d", __func__, mStreamInfo->num_of_burst);
+    } else {
+       mStreamInfo->streaming_mode = CAM_STREAMING_MODE_CONTINUOUS;
+    }
 
     rc = mCamOps->map_stream_buf(mCamHandle,
             mChannelHandle, mHandle, CAM_MAPPING_BUF_TYPE_STREAM_INFO,
@@ -281,17 +293,7 @@ int32_t QCamera3Stream::init(cam_stream_type_t streamType,
     stream_config.mem_vtbl = mMemVtbl;
     stream_config.padding_info = mPaddingInfo;
     stream_config.userdata = this;
-
-    switch(streamType) {
-        case CAM_STREAM_TYPE_SNAPSHOT:
-            stream_config.stream_cb = NULL;
-            ALOGI("%s: disabling stream_cb for snapshot", __func__);
-            break;
-        default:
-            stream_config.stream_cb = dataNotifyCB;
-            break;
-    }
-
+    stream_config.stream_cb = dataNotifyCB;
 
     rc = mCamOps->config_stream(mCamHandle,
             mChannelHandle, mHandle, &stream_config);
@@ -432,6 +434,7 @@ void *QCamera3Stream::dataProcRoutine(void *data)
     int ret;
     QCamera3Stream *pme = (QCamera3Stream *)data;
     QCameraCmdThread *cmdThread = &pme->mProcTh;
+    cmdThread->setName("cam_stream_proc");
 
     ALOGV("%s: E", __func__);
     do {
@@ -458,7 +461,6 @@ void *QCamera3Stream::dataProcRoutine(void *data)
                     } else {
                         // no data cb routine, return buf here
                         pme->bufDone(frame->bufs[0]->buf_idx);
-                        free(frame);
                     }
                 }
             }
@@ -475,6 +477,35 @@ void *QCamera3Stream::dataProcRoutine(void *data)
     } while (running);
     ALOGV("%s: X", __func__);
     return NULL;
+}
+
+/*===========================================================================
+ * FUNCTION   : getInternalFormatBuffer
+ *
+ * DESCRIPTION: return buffer in the internal format structure
+ *
+ * PARAMETERS :
+ *   @index   : index of buffer to be returned
+ *
+ * RETURN     : int32_t type of status
+ *              NO_ERROR  -- success
+ *              none-zero failure code
+ *==========================================================================*/
+mm_camera_buf_def_t* QCamera3Stream::getInternalFormatBuffer(int index)
+{
+    mm_camera_buf_def_t *rc = NULL;
+    if (index >= mNumBufs || mBufDefs == NULL) {
+        ALOGE("%s:Index out of range/no internal buffers yet", __func__);
+        return NULL;
+    }
+
+    rc = (mm_camera_buf_def_t*)malloc(sizeof(mm_camera_buf_def_t));
+    if(rc) {
+        memcpy(rc, &mBufDefs[index], sizeof(mm_camera_buf_def_t));
+    } else {
+        ALOGE("%s: Failed to allocate memory",__func__);
+    }
+    return rc;
 }
 
 /*===========================================================================
@@ -661,25 +692,6 @@ int32_t QCamera3Stream::cleanInvalidateBuf(int index)
 }
 
 /*===========================================================================
- * FUNCTION   : isTypeOf
- *
- * DESCRIPTION: helper function to determine if the stream is of the queried type
- *
- * PARAMETERS :
- *   @type    : stream type as of queried
- *
- * RETURN     : true/false
- *==========================================================================*/
-bool QCamera3Stream::isTypeOf(cam_stream_type_t type)
-{
-    if (mStreamInfo != NULL && (mStreamInfo->stream_type == type)) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
-/*===========================================================================
  * FUNCTION   : getFrameOffset
  *
  * DESCRIPTION: query stream buffer frame offset info
@@ -753,6 +765,24 @@ uint32_t QCamera3Stream::getMyServerID() {
         return mStreamInfo->stream_svr_id;
     } else {
         return 0;
+    }
+}
+
+/*===========================================================================
+ * FUNCTION   : getMyType
+ *
+ * DESCRIPTION: query stream type
+ *
+ * PARAMETERS : None
+ *
+ * RETURN     : type of stream
+ *==========================================================================*/
+cam_stream_type_t QCamera3Stream::getMyType() const
+{
+    if (mStreamInfo != NULL) {
+        return mStreamInfo->stream_type;
+    } else {
+        return CAM_STREAM_TYPE_MAX;
     }
 }
 

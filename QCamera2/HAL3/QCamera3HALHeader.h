@@ -37,6 +37,9 @@ extern "C" {
 using namespace android;
 
 namespace qcamera {
+
+class QCamera3Channel;
+
     typedef enum {
         INVALID,
         VALID,
@@ -47,14 +50,18 @@ namespace qcamera {
         int32_t jpeg_orientation;
         uint8_t jpeg_quality;
         cam_dimension_t thumbnail_size;
-        int64_t gps_timestamp;
-        double gps_coordinates[3];
-        uint8_t gps_processing_method;
         int32_t sensor_sensitivity;
+        int64_t sensor_exposure_time;
         float lens_focal_length;
         int32_t max_jpeg_size;
         int exposure_compensation;
         cam_rational_type_t exposure_comp_step;
+        int64_t* gps_timestamp;
+        double* gps_coordinates[3];
+        char gps_processing_method[35];
+        bool is_jpeg_format;
+        uint32_t min_required_pp_mask;
+        int32_t sharpness;
     } jpeg_settings_t;
 
     typedef struct {
@@ -62,7 +69,13 @@ namespace qcamera {
         camera3_stream_buffer_set_t buffer_set;
         stream_status_t status;
         int registered;
+        QCamera3Channel *channel;
     } stream_info_t;
+
+    typedef struct {
+        int32_t iso_speed;
+        int64_t exposure_time;
+    } metadata_response_t;
 
 };//namespace qcamera
 
