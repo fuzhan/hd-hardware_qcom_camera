@@ -81,8 +81,8 @@ typedef struct {
 } mm_jpeg_intf_test_t;
 
 static void mm_jpeg_encode_callback(jpeg_job_status_t status,
-  uint32_t client_hdl,
-  uint32_t jobId,
+  uint32_t client_hdl __attribute__((unused)),
+  uint32_t jobId __attribute__((unused)),
   mm_jpeg_output_t *p_output,
   void *userData)
 {
@@ -319,7 +319,7 @@ end:
  *       main function
  *
  **/
-int main(int argc, char* argv[])
+int main(int argc __attribute__((unused)), char* argv[] __attribute__((unused)))
 {
   return encode_test(&jpeg_input[0]);
 }
