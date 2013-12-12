@@ -23,6 +23,7 @@ LOCAL_C_INCLUDES := \
         frameworks/av/include \
         hardware/qcom/media/libstagefrighthw \
         system/media/camera/include \
+		$(TARGET_OUT_INTERMEDIATES)/include/qcom/display \
         $(LOCAL_PATH)/../../mm-image-codec/qexif \
         $(LOCAL_PATH)/../../mm-image-codec/qomx_core \
         $(LOCAL_PATH)/../util
